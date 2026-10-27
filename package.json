@@ -1,6 +1,6 @@
 {
   "name": "citecode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "引用可验证的代码阅读 Agent：MCP 只读工具 + DeepSeek 工具调用 + 引用回读校验 + 可复现评测基准",
   "type": "module",
   "license": "MIT",
@@ -32,6 +32,7 @@
     "smoke": "tsx scripts/smoke.ts examples/sample-repo",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "eval": "tsx src/cli.ts eval",
+    "ablation": "tsx src/cli.ts ablation",
     "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {

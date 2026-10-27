@@ -38,3 +38,9 @@ jobs:
       - run: npm run build
       # cassette 随仓库提交，因此这条基准在 CI 里完全离线、可复现。
       - run: node dist/cli.js eval --replay fixtures/cassettes --fail-under 0.8
+      # 第二个套件把 CiteCode 自己当作被测仓库（10 题，文件更大、引用更容易错位）
+      - run: node dist/cli.js eval --golden eval/golden-self.json --replay fixtures/cassettes-self --fail-under 0.7
+      # 故障注入回放：验证「校验 → 回灌 → 重查 → 重答」这条闭环在离线状态下同样会触发
+      - run: node dist/cli.js eval --golden eval/golden-self.json --replay fixtures/faults-self --faults 1 --fail-under 0.6
+      # 消融对照表也能离线复现，避免 README 里的数字只能靠一张嘴
+      - run: node dist/cli.js ablation --replay fixtures/ablation

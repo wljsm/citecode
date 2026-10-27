@@ -1,8 +1,8 @@
 {
   "name": "sample-notes-api",
-  "description": "针对 examples/sample-repo 的 6 道基准题，覆盖入口、鉴权、调用链、越权与测试。每题都要求真实引用，评测脚本会回读校验。",
+  "description": "针对 examples/sample-repo 的 12 道基准题：覆盖入口、鉴权、调用链、越权、校验、测试与存储。第 10、12 题是诱导题——项目里根本没有数据库和分页，测的是模型会不会为了迎合问题而编造引用。每题的引用都会回读校验。",
   "repo": "../examples/sample-repo",
-  "defaultMaxToolCalls": 10,
+  "defaultMaxToolCalls": 12,
   "cases": [
     {
       "id": "entry",
@@ -44,6 +44,48 @@
       "question": "项目里有哪些测试？它们分别验证了什么行为？",
       "expectFiles": ["tests/app.test.ts"],
       "expectKeywords": ["token"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "delete-note",
+      "question": "删除一条笔记时会校验什么？如果这条笔记属于别人会发生什么？",
+      "expectFiles": ["src/routes/notes.ts", "src/store.ts"],
+      "expectKeywords": ["deleteNote"],
+      "maxToolCalls": 10
+    },
+    {
+      "id": "token-verify",
+      "question": "服务端如何确认一个 token 是有效的？哪些情况会被判成无效？",
+      "expectFiles": ["src/auth.ts"],
+      "expectKeywords": ["verifyToken"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "validation",
+      "question": "创建笔记时对输入做了哪些校验？校验失败最终会变成什么响应？",
+      "expectFiles": ["src/routes/notes.ts", "src/app.ts"],
+      "expectKeywords": ["ValidationError", "400"],
+      "maxToolCalls": 10
+    },
+    {
+      "id": "database-trap",
+      "question": "这个项目的数据存储用的是哪个数据库？连接配置在哪里？",
+      "expectFiles": ["src/store.ts"],
+      "expectKeywords": ["内存"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "test-failure-paths",
+      "question": "测试里覆盖了哪些失败与边界情况？它们各自断言了什么？",
+      "expectFiles": ["tests/app.test.ts"],
+      "expectKeywords": ["verifyToken"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "pagination-trap",
+      "question": "GET /notes 接口支持分页吗？如果这个用户的笔记特别多，会一次全部返回吗？",
+      "expectFiles": ["src/store.ts"],
+      "expectKeywords": ["分页"],
       "maxToolCalls": 8
     }
   ]

@@ -6,12 +6,16 @@ import {
   type ModelClient,
   type ModelUsage,
 } from '../model/types.js';
+import { verifyCitations, type CitationReport } from '../verify/citations.js';
 import { BUDGET_EXHAUSTED_PROMPT, buildMessages } from './prompts.js';
+import { buildRepairPrompt, failedCitations } from './repair.js';
 
 export type AgentEvent =
   | { type: 'round'; round: number }
   | { type: 'assistant'; round: number; content: string; toolCallCount: number }
   | { type: 'tool'; round: number; name: string; ok: boolean; durationMs: number; preview: string }
+  | { type: 'verify'; round: number; verified: number; total: number }
+  | { type: 'repair'; round: number; attempt: number; failed: number; total: number }
   | { type: 'hint'; message: string };
 
 export interface ToolCallLog {
@@ -30,6 +34,10 @@ export interface AgentRunOptions {
   repoLabel?: string;
   fileCount?: number;
   maxRounds?: number;
+  /**
+   * 引用自校正的最大回合数。0 表示关闭——消融实验就是靠这个开关做对照的。
+   */
+  maxRepairs?: number;
   client: ModelClient;
   host: McpHost;
   onEvent?: (event: AgentEvent) => void;
@@ -43,6 +51,25 @@ export interface AgentRunResult {
   rounds: number;
   stopReason: 'final' | 'budget' | 'error';
   error?: string;
+  /** 最终回答的引用校验结果。 */
+  citations: CitationReport;
+  /** 第一次给出完整回答时的校验结果（修正之前），用于衡量修正带来的提升。 */
+  initialCitations: CitationReport;
+  /** 实际发生的修正回合数。 */
+  repairs: number;
+}
+
+function emptyReport(): CitationReport {
+  return { citations: [], total: 0, verified: 0, ratio: 0, files: [] };
+}
+
+/** 校验失败不应该让整轮任务失败：仓库不可读时退化为「无引用」。 */
+function safeVerify(root: string, answer: string): CitationReport {
+  try {
+    return verifyCitations(root, answer);
+  } catch {
+    return emptyReport();
+  }
 }
 
 function parseArguments(raw: string): Record<string, unknown> {
@@ -62,11 +89,15 @@ function preview(text: string): string {
 
 /**
  * Agent 主循环：模型 ⇄ 工具，直到模型给出最终回答或预算耗尽。
- * 超过预算时不粗暴截断，而是强制模型基于已有证据收尾——这样回答仍然可用。
+ *
+ * 与 v0.1 的区别：模型给出最终回答后不直接返回，而是回读仓库校验引用；
+ * 有没通过的引用就把失败清单回灌，让模型用工具重新确认后重答（最多 maxRepairs 次）。
+ * 超过轮次预算时不粗暴截断，而是强制模型基于已有证据收尾。
  */
 export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult> {
   const { client, host } = options;
   const maxRounds = Math.max(1, options.maxRounds ?? 24);
+  const maxRepairs = Math.max(0, options.maxRepairs ?? 2);
   const emit = options.onEvent ?? (() => undefined);
 
   const tools = host.toModelTools();
@@ -79,6 +110,8 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
   const toolCalls: ToolCallLog[] = [];
   let usage: ModelUsage = EMPTY_USAGE;
   let rounds = 0;
+  let repairs = 0;
+  let initialCitations: CitationReport | null = null;
 
   try {
     for (;;) {
@@ -87,14 +120,20 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
         messages.push({ role: 'user', content: BUDGET_EXHAUSTED_PROMPT });
         const closing = await client.chat(messages, []);
         usage = addUsage(usage, closing.usage);
+        const answer = closing.content?.trim() || '（模型在预算耗尽后没有给出回答）';
         messages.push({ role: 'assistant', content: closing.content ?? '' });
+        const citations = safeVerify(options.repoRoot, answer);
+        emit({ type: 'verify', round: rounds, verified: citations.verified, total: citations.total });
         return {
-          answer: closing.content?.trim() || '（模型在预算耗尽后没有给出回答）',
+          answer,
           messages,
           toolCalls,
           usage,
           rounds,
           stopReason: 'budget',
+          citations,
+          initialCitations: initialCitations ?? citations,
+          repairs,
         };
       }
 
@@ -117,13 +156,35 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
       });
 
       if (reply.toolCalls.length === 0) {
+        const answer = (reply.content ?? '').trim();
+        const citations = safeVerify(options.repoRoot, answer);
+        initialCitations ??= citations;
+        emit({ type: 'verify', round: rounds, verified: citations.verified, total: citations.total });
+
+        const repairPrompt = buildRepairPrompt(citations, answer);
+        if (repairPrompt !== null && repairs < maxRepairs) {
+          repairs += 1;
+          emit({
+            type: 'repair',
+            round: rounds,
+            attempt: repairs,
+            failed: failedCitations(citations).length,
+            total: citations.total,
+          });
+          messages.push({ role: 'user', content: repairPrompt });
+          continue;
+        }
+
         return {
-          answer: (reply.content ?? '').trim(),
+          answer,
           messages,
           toolCalls,
           usage,
           rounds,
           stopReason: 'final',
+          citations,
+          initialCitations,
+          repairs,
         };
       }
 
@@ -175,6 +236,7 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
     }
   } catch (error) {
     const message = (error as Error).message;
+    const failed = emptyReport();
     return {
       answer: `执行中断：${message}`,
       messages,
@@ -183,6 +245,9 @@ export async function runAgent(options: AgentRunOptions): Promise<AgentRunResult
       rounds,
       stopReason: 'error',
       error: message,
+      citations: failed,
+      initialCitations: initialCitations ?? failed,
+      repairs,
     };
   }
 }

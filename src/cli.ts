@@ -11,6 +11,7 @@ import { runAgent, type AgentEvent } from './agent/loop.js';
 import { renderCitationReport, verifyCitations } from './verify/citations.js';
 import { walkFiles } from './repo/walk.js';
 import { renderCaseLine, renderSummary, runSuite, type GoldenSuite } from './eval/runner.js';
+import { renderAblation, runAblation } from './eval/ablation.js';
 
 const useColor = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
 const paint =
@@ -54,6 +55,19 @@ function printEvent(event: AgentEvent): void {
       if (event.content) console.log(`  ${bold('💭')} ${dim(event.content.replace(/\s+/g, ' ').slice(0, 200))}`);
       if (event.toolCallCount > 0) console.log(dim(`  → 请求 ${event.toolCallCount} 个工具`));
       break;
+    case 'verify': {
+      const ok = event.total > 0 && event.verified === event.total;
+      const body = event.total === 0 ? '没有引用' : `${event.verified}/${event.total} 通过`;
+      console.log(`  ${ok ? green('✓') : red('✗')} 回读校验 ${dim(body)}`);
+      break;
+    }
+    case 'repair':
+      console.log(
+        yellow(
+          `  ↻ 自校正第 ${event.attempt} 次：${event.failed}/${event.total} 条引用未通过，已把失败清单回灌给模型`,
+        ),
+      );
+      break;
     case 'hint':
       console.log(yellow(`⚠ ${event.message}`));
       break;
@@ -62,10 +76,11 @@ function printEvent(event: AgentEvent): void {
 
 function printRunStats(result: Awaited<ReturnType<typeof runAgent>>): void {
   const toolOk = result.toolCalls.filter((call) => call.ok).length;
+  const repairs = result.repairs > 0 ? ` · 自校正 ${result.repairs} 次` : '';
   console.log(
     dim(
       `轮次 ${result.rounds} · 工具 ${result.toolCalls.length} 次（成功 ${toolOk}）· ` +
-        `token ${result.usage.totalTokens} · 结束方式 ${result.stopReason}`,
+        `token ${result.usage.totalTokens} · 结束方式 ${result.stopReason}${repairs}`,
     ),
   );
 }
@@ -98,6 +113,7 @@ async function commandAsk(args: string[]): Promise<void> {
     allowPositionals: true,
     options: {
       rounds: { type: 'string' },
+      repairs: { type: 'string' },
       json: { type: 'boolean', default: false },
       verify: { type: 'boolean', default: true },
       quiet: { type: 'boolean', default: false },
@@ -114,6 +130,8 @@ async function commandAsk(args: string[]): Promise<void> {
   const config = loadConfig();
   const maxRounds = values.rounds ? Number.parseInt(values.rounds, 10) : config.maxRounds;
   if (!Number.isFinite(maxRounds) || maxRounds < 1) fail('--rounds 必须是正整数');
+  const maxRepairs = values.repairs === undefined ? 2 : Number.parseInt(values.repairs, 10);
+  if (!Number.isFinite(maxRepairs) || maxRepairs < 0) fail('--repairs 必须是非负整数（0 表示关闭自校正）');
 
   const recorder = values.record ? new CassetteRecorder() : undefined;
   const replay = values.replay ? loadCassette(resolve(values.replay)) : undefined;
@@ -129,7 +147,7 @@ async function commandAsk(args: string[]): Promise<void> {
     if (!values.quiet) {
       console.log(`${bold('仓库')} ${root} ${dim(`(${files.length} 个文件)`)}`);
       console.log(`${bold('问题')} ${question}`);
-      console.log(`${bold('模型')} ${client.label} ${dim(`· 预算 ${maxRounds} 轮`)}\n`);
+      console.log(`${bold('模型')} ${client.label} ${dim(`· 预算 ${maxRounds} 轮 · 自校正 ${maxRepairs} 轮`)}\n`);
     }
 
     const result = await runAgent({
@@ -138,6 +156,7 @@ async function commandAsk(args: string[]): Promise<void> {
       repoLabel: root,
       fileCount: files.length,
       maxRounds,
+      maxRepairs,
       client,
       host,
       ...(values.quiet ? {} : { onEvent: printEvent }),
@@ -149,9 +168,7 @@ async function commandAsk(args: string[]): Promise<void> {
     }
 
     const report =
-      values.verify && result.answer && result.stopReason !== 'error'
-        ? verifyCitations(root, result.answer)
-        : undefined;
+      values.verify && result.answer && result.stopReason !== 'error' ? result.citations : undefined;
 
     if (values.json) {
       console.log(
@@ -164,6 +181,8 @@ async function commandAsk(args: string[]): Promise<void> {
             rounds: result.rounds,
             usage: result.usage,
             toolCalls: result.toolCalls,
+            repairs: result.repairs,
+            initialRatio: result.initialCitations.ratio,
             citations: report
               ? {
                   total: report.total,
@@ -231,6 +250,8 @@ async function commandEval(args: string[]): Promise<void> {
       replay: { type: 'string' },
       record: { type: 'string' },
       rounds: { type: 'string' },
+      repairs: { type: 'string' },
+      faults: { type: 'string' },
       json: { type: 'boolean', default: false },
       verbose: { type: 'boolean', default: false },
       'fail-under': { type: 'string', default: '0.8' },
@@ -247,8 +268,8 @@ async function commandEval(args: string[]): Promise<void> {
   const mode = values.replay ? 'replay' : values.record ? 'record' : 'live';
   const cassetteDir = values.replay ? resolve(values.replay) : values.record ? resolve(values.record) : undefined;
 
-  if (mode !== 'live' && !existsSync(cassetteDir!)) {
-    fail(`cassette 目录不存在：${cassetteDir}（录制模式下会自动创建）`);
+  if (mode === 'replay' && !existsSync(cassetteDir!)) {
+    fail(`cassette 目录不存在：${cassetteDir}`);
   }
 
   const host = await McpHost.connect([resolveRepoServerSpec(repoRoot)]);
@@ -268,6 +289,8 @@ async function commandEval(args: string[]): Promise<void> {
       mode,
       ...(cassetteDir ? { cassetteDir } : {}),
       ...(values.rounds ? { maxRounds: Number.parseInt(values.rounds, 10) } : {}),
+      ...(values.repairs ? { maxRepairs: Number.parseInt(values.repairs, 10) } : {}),
+      ...(values.faults ? { faults: Number.parseInt(values.faults, 10) } : {}),
       ...(values.verbose
         ? {
             onEvent: (caseId: string, event: AgentEvent) => {
@@ -296,6 +319,81 @@ async function commandEval(args: string[]): Promise<void> {
   }
 }
 
+async function commandAblation(args: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: {
+      golden: { type: 'string', default: join(process.cwd(), 'eval', 'golden.json') },
+      replay: { type: 'string' },
+      record: { type: 'string' },
+      rounds: { type: 'string' },
+      faults: { type: 'string' },
+      json: { type: 'boolean', default: false },
+    },
+  });
+
+  const goldenPath = resolve(values.golden);
+  if (!existsSync(goldenPath)) fail(`找不到基准文件：${goldenPath}`);
+  const suite = JSON.parse(readFileSync(goldenPath, 'utf8')) as GoldenSuite;
+  const repoRoot = resolve(dirname(goldenPath), suite.repo ?? '.');
+  if (!existsSync(repoRoot)) fail(`基准里的仓库路径不存在：${repoRoot}`);
+
+  const config = loadConfig();
+  const mode = values.replay ? 'replay' : values.record ? 'record' : 'live';
+  const cassetteDir = values.replay
+    ? resolve(values.replay)
+    : values.record
+      ? resolve(values.record)
+      : undefined;
+
+  const host = await McpHost.connect([resolveRepoServerSpec(repoRoot)]);
+  try {
+    const { files } = walkFiles(repoRoot);
+    if (!values.json) {
+      console.log(
+        `${bold('消融实验')} ${suite.name} ${dim(`· ${suite.cases.length} 题 × 2 组配置 · ${mode} 模式`)}`,
+      );
+      console.log(`${bold('仓库')} ${repoRoot} ${dim(`(${files.length} 个文件)`)}\n`);
+    }
+
+    const report = await runAblation(suite, {
+      host,
+      config,
+      repoRoot,
+      repoLabel: repoRoot,
+      fileCount: files.length,
+      mode,
+      ...(cassetteDir ? { cassetteDir } : {}),
+      ...(values.rounds ? { maxRounds: Number.parseInt(values.rounds, 10) } : {}),
+      ...(values.faults ? { faults: Number.parseInt(values.faults, 10) } : {}),
+    });
+
+    if (values.json) {
+      console.log(
+        JSON.stringify(
+          {
+            suite: report.suite,
+            runs: report.runs.map((run) => ({
+              label: run.label,
+              slug: run.slug,
+              maxRepairs: run.maxRepairs,
+              summary: run.summary,
+            })),
+            fixedCases: report.fixedCases,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      console.log(renderAblation(report));
+    }
+  } finally {
+    await host.close();
+  }
+}
+
 function printHelp(): void {
   console.log(`${bold('citecode')} — 引用可验证的代码阅读 Agent
 
@@ -304,9 +402,11 @@ ${bold('用法')}
   citecode ask    <仓库> <问题> [选项]           问一个关于代码库的问题
   citecode verify <仓库> [--file 回答.md]        校验一段文本里的引用是否真实
   citecode eval   [--golden eval/golden.json]   跑基准并输出指标
+  citecode ablation [--golden eval/golden.json] 关掉/开启自校正各跑一遍，输出对照组
 
 ${bold('ask 选项')}
   --rounds <n>     探索预算轮数，默认取 CITECODE_MAX_ROUNDS（24）
+  --repairs <n>    引用自校正回合数，默认 2；0 表示关闭
   --replay <file>  回放 cassette，不联网
   --record <file>  把本次模型响应录制成 cassette
   --no-verify      跳过引用校验
@@ -316,7 +416,15 @@ ${bold('ask 选项')}
 ${bold('eval 选项')}
   --replay <dir>   用录制的 cassette 跑分（CI 常用，无需密钥）
   --record <dir>   录制本次跑分
+  --repairs <n>    引用自校正回合数，默认 2；0 表示关闭（消融对照用）
+  --faults <n>     故障注入：把每题首答的最多 n 条引用行号改错，验证自校正闭环
   --fail-under <n> 通过率门槛，默认 0.8
+
+${bold('ablation 选项')}
+  --golden <file>  基准文件，默认 eval/golden.json
+  --record <dir>   按 baseline/ 与 repair/ 两个子目录分别录制
+  --replay <dir>   从上述两个子目录回放，无需密钥
+  --faults <n>     两组配置都注入故障，用来对比「有修复」与「没修复」的差距
 `);
 }
 
@@ -335,6 +443,9 @@ async function main(): Promise<void> {
     case 'eval':
       await commandEval(rest);
       break;
+    case 'ablation':
+      await commandAblation(rest);
+      break;
     case undefined:
     case 'help':
     case '--help':
@@ -342,7 +453,7 @@ async function main(): Promise<void> {
       printHelp();
       break;
     default:
-      fail(`未知命令：${command}（可用：tools / ask / verify / eval）`);
+      fail(`未知命令：${command}（可用：tools / ask / verify / eval / ablation）`);
   }
 }
 

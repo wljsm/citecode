@@ -4,6 +4,7 @@ import { createModelClient } from '../model/deepseek.js';
 import { CassetteRecorder, loadCassette } from '../model/cassette.js';
 import { runAgent, type AgentEvent } from '../agent/loop.js';
 import { verifyCitations, type CitationReport } from '../verify/citations.js';
+import { withCitationFaults } from './fault.js';
 
 export interface GoldenCase {
   id: string;
@@ -29,7 +30,15 @@ export interface CaseResult {
   id: string;
   question: string;
   stopReason: string;
+  /** 最终回答（修正后）的引用通过率。 */
   citationRatio: number;
+  /** 第一次给出回答时的引用通过率——修正前的基线。 */
+  initialCitationRatio: number;
+  /** 修正后仍然失败的引用条数。 */
+  hallucinatedCitations: number;
+  repairs: number;
+  /** 故障注入模式下被改错的引用条数（0 表示未启用注入）。 */
+  injectedFaults: number;
   totalCitations: number;
   verifiedCitations: number;
   /** expectFiles 中被真实引用命中的比例。 */
@@ -51,7 +60,19 @@ export interface SuiteSummary {
   cases: number;
   passed: number;
   passRate: number;
+  /** 修正后的平均引用通过率。 */
   avgCitationRatio: number;
+  /** 修正前的平均引用通过率（对照组用同一字段即可）。 */
+  avgInitialCitationRatio: number;
+  /** 幻觉引用率 = 校验未通过的引用条数 / 引用总条数。 */
+  hallucinatedRate: number;
+  avgRepairs: number;
+  /** 全部题目里出现过的修正回合总数。 */
+  repairs: number;
+  /** 故障注入：被改错的引用总条数、涉及的题目数、最终修复回 100% 的题目数。 */
+  injectedFaults: number;
+  injectedCases: number;
+  recoveredCases: number;
   avgFileHit: number;
   avgToolCalls: number;
   avgTokens: number;
@@ -69,6 +90,10 @@ export interface EvalDeps {
   cassetteDir?: string;
   mode: 'live' | 'record' | 'replay';
   maxRounds?: number;
+  /** 引用自校正轮数上限；0 = 关闭，用于消融对照。 */
+  maxRepairs?: number;
+  /** 故障注入：每题把首答的最多 N 条引用改错，用于验证自校正闭环。 */
+  faults?: number;
   onEvent?: (caseId: string, event: AgentEvent) => void;
 }
 
@@ -116,6 +141,8 @@ export async function runSuite(
       ...(recorder ? { recorder } : {}),
       ...(replay ? { replay } : {}),
     });
+    const faultClient =
+      deps.faults && deps.faults > 0 ? withCitationFaults(client, { maxFaults: deps.faults }) : undefined;
 
     const run = await runAgent({
       question: testCase.question,
@@ -123,7 +150,8 @@ export async function runSuite(
       repoLabel: deps.repoLabel,
       fileCount: deps.fileCount,
       maxRounds: deps.maxRounds ?? deps.config.maxRounds,
-      client,
+      maxRepairs: deps.maxRepairs ?? 2,
+      client: faultClient ?? client,
       host: deps.host,
       ...(deps.onEvent ? { onEvent: (event: AgentEvent) => deps.onEvent!(testCase.id, event) } : {}),
     });
@@ -150,6 +178,10 @@ export async function runSuite(
       question: testCase.question,
       stopReason: run.stopReason,
       citationRatio: report.ratio,
+      initialCitationRatio: run.initialCitations.ratio,
+      hallucinatedCitations: report.total - report.verified,
+      repairs: run.repairs,
+      injectedFaults: faultClient?.injected() ?? 0,
       totalCitations: report.total,
       verifiedCitations: report.verified,
       fileHit: hitRate,
@@ -167,6 +199,8 @@ export async function runSuite(
 
   const passed = results.filter((result) => result.pass).length;
   const latencies = results.map((result) => result.durationMs).sort((a, b) => a - b);
+  const totalCitations = results.reduce((sum, result) => sum + result.totalCitations, 0);
+  const totalHallucinated = results.reduce((sum, result) => sum + result.hallucinatedCitations, 0);
 
   return {
     results,
@@ -176,6 +210,14 @@ export async function runSuite(
       passed,
       passRate: results.length === 0 ? 0 : passed / results.length,
       avgCitationRatio: average(results, (result) => result.citationRatio),
+      avgInitialCitationRatio: average(results, (result) => result.initialCitationRatio),
+      hallucinatedRate: totalCitations === 0 ? 0 : totalHallucinated / totalCitations,
+      avgRepairs: average(results, (result) => result.repairs),
+      repairs: results.reduce((sum, result) => sum + result.repairs, 0),
+      injectedFaults: results.reduce((sum, result) => sum + result.injectedFaults, 0),
+      injectedCases: results.filter((result) => result.injectedFaults > 0).length,
+      recoveredCases: results.filter((result) => result.injectedFaults > 0 && result.citations.ratio === 1)
+        .length,
       avgFileHit: average(results, (result) => result.fileHit),
       avgToolCalls: average(results, (result) => result.toolCalls),
       avgTokens: average(results, (result) => result.totalTokens),
@@ -186,20 +228,34 @@ export async function runSuite(
 
 export function renderSummary(summary: SuiteSummary): string {
   const percent = (value: number): string => `${(value * 100).toFixed(0)}%`;
-  return [
+  const lines = [
     `基准：${summary.name}`,
     `通过：${summary.passed}/${summary.cases}（${percent(summary.passRate)}）`,
-    `平均引用通过率：${percent(summary.avgCitationRatio)}`,
+    `平均引用通过率：${percent(summary.avgCitationRatio)}（修正前 ${percent(summary.avgInitialCitationRatio)}）`,
+    `幻觉引用率：${percent(summary.hallucinatedRate)}`,
+    `自校正回合：${summary.repairs} 次（平均每题 ${summary.avgRepairs.toFixed(1)}）`,
     `平均期望文件命中：${percent(summary.avgFileHit)}`,
     `平均工具调用：${summary.avgToolCalls.toFixed(1)} 次`,
     `平均 token：${Math.round(summary.avgTokens)}`,
     `P50 时延：${summary.p50LatencyMs} ms`,
-  ].join('\n');
+  ];
+  if (summary.injectedFaults > 0) {
+    lines.splice(
+      5,
+      0,
+      `故障注入：改错 ${summary.injectedFaults} 条引用（${summary.injectedCases} 题），修复回 100% 的 ${summary.recoveredCases}/${summary.injectedCases} 题`,
+    );
+  }
+  return lines.join('\n');
 }
 
 export function renderCaseLine(result: CaseResult): string {
   const mark = result.pass ? '✓' : '✗';
   const ratio = `${(result.citationRatio * 100).toFixed(0)}%`;
+  const fixed =
+    result.repairs > 0
+      ? `  (修正 ${result.repairs} 次: ${(result.initialCitationRatio * 100).toFixed(0)}%→${ratio})`
+      : '';
   const tail = result.failures.length > 0 ? `  ← ${result.failures.join('；')}` : '';
-  return `  ${mark} ${result.id.padEnd(18)} 引用 ${ratio.padStart(4)}  工具 ${String(result.toolCalls).padStart(2)} 次  ${String(result.durationMs).padStart(6)} ms${tail}`;
+  return `  ${mark} ${result.id.padEnd(18)} 引用 ${ratio.padStart(4)}  工具 ${String(result.toolCalls).padStart(2)} 次  ${String(result.durationMs).padStart(6)} ms${fixed}${tail}`;
 }

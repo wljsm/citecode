@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { runAgent } from '../src/agent/loop.js';
 import type { McpHost } from '../src/mcp/host.js';
@@ -48,6 +51,7 @@ test('模型调用一次工具后给出最终回答', async () => {
     repoRoot: '.',
     fileCount: 10,
     maxRounds: 10,
+    maxRepairs: 0,
     client: model,
     host: hostStub('1│ const app = createApp();'),
   });
@@ -74,6 +78,7 @@ test('预算耗尽时强制收尾，最后一次调用不携带工具', async ()
     question: '入口在哪？',
     repoRoot: '.',
     maxRounds: 2,
+    maxRepairs: 0,
     client: model,
     host: hostStub('内容'),
   });
@@ -176,4 +181,87 @@ test('累计 usage 会跨轮求和', async () => {
 
   assert.equal(result.usage.totalTokens, 43);
   assert.equal(result.usage.promptTokens, 30);
+});
+
+/** 建一个临时仓库，避免引用校验去扫当前工程。 */
+function withRepo(files: Record<string, string>): { dir: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), 'citecode-agent-'));
+  for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body, 'utf8');
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+test('引用校验失败时把失败清单回灌给模型并重答', async () => {
+  const repo = withRepo({ 'a.ts': 'const a = 1;\nconst b = 2;\nconst c = 3;\n' });
+  try {
+    const model = scriptedModel([
+      { content: '答案在 `a.ts:99`。', toolCalls: [], usage: ZERO_USAGE },
+      { content: '确认后：答案在 `a.ts:2`。', toolCalls: [], usage: ZERO_USAGE },
+    ]);
+
+    const result = await runAgent({
+      question: 'q',
+      repoRoot: repo.dir,
+      maxRounds: 5,
+      client: model,
+      host: hostStub('内容'),
+    });
+
+    assert.equal(result.stopReason, 'final');
+    assert.equal(result.repairs, 1);
+    assert.equal(result.initialCitations.ratio, 0, '首次回答的引用应当是错的');
+    assert.equal(result.citations.ratio, 1, '修正后引用应当全部通过');
+    assert.match(result.answer, /a\.ts:2/);
+    const repairMessage = result.messages.find(
+      (message) => message.role === 'user' && message.content.includes('回读校验'),
+    );
+    assert.ok(repairMessage, '应当有一条修正指令');
+    assert.match(repairMessage.content, /行号越界/);
+  } finally {
+    repo.cleanup();
+  }
+});
+
+test('自校正受 maxRepairs 约束，用完即停', async () => {
+  const repo = withRepo({ 'a.ts': 'const a = 1;\n' });
+  try {
+    const bad: ModelReply = { content: '还是 `a.ts:99`。', toolCalls: [], usage: ZERO_USAGE };
+    const model = scriptedModel([bad, bad, bad, bad]);
+
+    const result = await runAgent({
+      question: 'q',
+      repoRoot: repo.dir,
+      maxRounds: 8,
+      maxRepairs: 1,
+      client: model,
+      host: hostStub('内容'),
+    });
+
+    assert.equal(result.repairs, 1, '只允许修正一次');
+    assert.equal(result.rounds, 2, '第一次回答 + 一次修正');
+    assert.equal(result.citations.ratio, 0);
+  } finally {
+    repo.cleanup();
+  }
+});
+
+test('maxRepairs 为 0 时不进入修正回合', async () => {
+  const repo = withRepo({ 'a.ts': 'const a = 1;\n' });
+  try {
+    const model = scriptedModel([{ content: '错的 `a.ts:42`。', toolCalls: [], usage: ZERO_USAGE }]);
+
+    const result = await runAgent({
+      question: 'q',
+      repoRoot: repo.dir,
+      maxRounds: 5,
+      maxRepairs: 0,
+      client: model,
+      host: hostStub('内容'),
+    });
+
+    assert.equal(result.repairs, 0);
+    assert.equal(result.rounds, 1);
+    assert.equal(result.citations.ratio, 0);
+  } finally {
+    repo.cleanup();
+  }
 });

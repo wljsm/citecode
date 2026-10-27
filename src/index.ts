@@ -9,6 +9,7 @@ export { CassetteRecorder, CassetteReplay, loadCassette, parseCassette, type Cas
 export type { ChatMessage, ModelClient, ModelReply, ModelUsage, ToolSchema } from './model/types.js';
 export { runAgent, type AgentEvent, type AgentRunOptions, type AgentRunResult, type ToolCallLog } from './agent/loop.js';
 export { BUDGET_EXHAUSTED_PROMPT, SYSTEM_PROMPT, buildUserPrompt } from './agent/prompts.js';
+export { buildRepairPrompt, failedCitations, needsRepair } from './agent/repair.js';
 export {
   extractCitations,
   renderCitationReport,
@@ -31,3 +32,11 @@ export {
   type GoldenSuite,
   type SuiteSummary,
 } from './eval/runner.js';
+export {
+  DEFAULT_ABLATION_CONFIGS,
+  renderAblation,
+  runAblation,
+  type AblationConfig,
+  type AblationReport,
+  type AblationRun,
+} from './eval/ablation.js';

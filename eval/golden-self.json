@@ -1,0 +1,78 @@
+{
+  "name": "citecode-self",
+  "description": "把 CiteCode 自己当作被测仓库：10 道关于它自身实现的问题。相比 sample-repo，这套题的难点在于仓库更大（16 个源文件、2500+ 行），且 cli.ts / loop.ts 等文件超过 read_file 的单次窗口，模型必须分段读取才能确认行号——引用错位的概率显著更高。",
+  "repo": "..",
+  "defaultMaxToolCalls": 14,
+  "cases": [
+    {
+      "id": "mcp-prefix",
+      "question": "MCP Host 如何把多个 Server 的工具名加上前缀？函数名是什么、用什么分隔符？",
+      "expectFiles": ["src/mcp/host.ts"],
+      "expectKeywords": ["namespacedToolName"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "sandbox-layers",
+      "question": "路径沙箱对越界访问做了哪些拦截？软链接是怎么处理的？",
+      "expectFiles": ["src/repo/sandbox.ts"],
+      "expectKeywords": ["realpath"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "read-window",
+      "question": "read_file 单次最多返回多少行？内容超出时它怎么提示继续读？",
+      "expectFiles": ["src/mcp/repo-server.ts"],
+      "expectKeywords": ["startLine"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "budget-exhausted",
+      "question": "轮次预算用尽时 Agent 做了什么？为什么最后一次模型调用不再提供工具？",
+      "expectFiles": ["src/agent/loop.ts"],
+      "expectKeywords": ["预算"],
+      "maxToolCalls": 10
+    },
+    {
+      "id": "cassette-guard",
+      "question": "回放 cassette 时，怎么判断录制的交互和当前请求是否仍然匹配？不匹配会怎样？",
+      "expectFiles": ["src/model/cassette.ts"],
+      "expectKeywords": ["requestMessages"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "http-errors",
+      "question": "模型调用出错时，401 和 429 分别会被翻译成什么提示？在哪里实现的？",
+      "expectFiles": ["src/model/deepseek.ts"],
+      "expectKeywords": ["explainModelError"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "ci-offline",
+      "question": "CI 里的评测任务为什么不需要 API Key？它执行的命令是什么？",
+      "expectFiles": [".github/workflows/ci.yml"],
+      "expectKeywords": ["replay"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "citation-status",
+      "question": "引用校验会给出哪几种结论？行号越界是怎么判定的？",
+      "expectFiles": ["src/verify/citations.ts"],
+      "expectKeywords": ["out_of_range"],
+      "maxToolCalls": 10
+    },
+    {
+      "id": "walk-ignores",
+      "question": "遍历仓库时哪些目录会被跳过？这个忽略列表定义在哪里？",
+      "expectFiles": ["src/repo/walk.ts"],
+      "expectKeywords": ["node_modules"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "repair-prompt",
+      "question": "自校正时回灌给模型的失败清单里包含哪些信息？每次最多列几条？",
+      "expectFiles": ["src/agent/repair.ts"],
+      "expectKeywords": ["完整的新回答"],
+      "maxToolCalls": 8
+    }
+  ]
+}
