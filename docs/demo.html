@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CiteCode · 引用可验证的代码阅读 Agent</title>
+<style>
+:root {
+  --bg: #0F172A;
+  --card: #1B2336;
+  --card-2: #222C44;
+  --fg: #F8FAFC;
+  --muted: #94A3B8;
+  --accent: #22C55E;
+  --danger: #EF4444;
+  --warn: #F59E0B;
+  --line: rgba(148, 163, 184, 0.16);
+  --line-strong: rgba(148, 163, 184, 0.32);
+  --mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: Inter, "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --r: 16px;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(1100px 520px at 12% -10%, rgba(34, 197, 94, 0.10), transparent 60%),
+    radial-gradient(900px 460px at 88% 0%, rgba(59, 130, 246, 0.10), transparent 62%),
+    var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+.top {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(14px);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+.brand b { letter-spacing: 0.2px; }
+.logo { color: var(--accent); font-size: 18px; line-height: 1; }
+.muted { color: var(--muted); }
+.meta { display: flex; gap: 8px; align-items: center; }
+.pill {
+  padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: rgba(34, 197, 94, 0.08);
+  color: var(--fg); font-size: 12px; font-family: var(--mono);
+}
+.pill.plain { background: rgba(148, 163, 184, 0.08); }
+.layout {
+  display: grid; grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 16px; padding: 16px 24px 28px; max-width: 1420px; margin: 0 auto;
+  align-items: start;
+}
+@media (max-width: 1080px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 16px;
+}
+.side { position: sticky; top: 74px; max-height: calc(100vh - 92px); display: flex; flex-direction: column; }
+.repo-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.repo-row .label { font-size: 12px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+.repo-row code {
+  font-family: var(--mono); font-size: 12.5px; color: var(--fg);
+  background: rgba(148, 163, 184, 0.10); border: 1px solid var(--line);
+  padding: 3px 8px; border-radius: 8px;
+}
+textarea {
+  width: 100%; resize: vertical; min-height: 56px;
+  background: var(--card-2); color: var(--fg);
+  border: 1px solid var(--line-strong); border-radius: 12px;
+  padding: 12px 14px; font-family: var(--sans); font-size: 14px;
+}
+textarea:focus, button:focus-visible { outline: 2px solid rgba(34, 197, 94, 0.6); outline-offset: 2px; }
+.actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+button { font-family: inherit; cursor: pointer; }
+#run {
+  background: var(--accent); color: #05230F; border: 0;
+  padding: 9px 20px; border-radius: 10px; font-weight: 600; font-size: 13.5px;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+#run:hover:not(:disabled) { filter: brightness(1.06); transform: translateY(-1px); }
+#run:disabled { opacity: 0.5; cursor: progress; }
+.status { font-size: 12.5px; color: var(--muted); min-height: 18px; }
+.status.bad { color: var(--danger); }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.chip {
+  background: rgba(148, 163, 184, 0.08); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 4px 11px; font-size: 12px; font-family: var(--mono);
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.chip:hover { color: var(--fg); border-color: var(--line-strong); }
+.stream {
+  margin-top: 16px; padding: 12px; border-radius: 12px;
+  background: rgba(15, 23, 42, 0.55); border: 1px solid var(--line);
+  max-height: 320px; overflow: auto; font-family: var(--mono); font-size: 12.5px;
+}
+.ev { padding: 2px 0; color: var(--muted); display: flex; gap: 8px; align-items: baseline; }
+.ev.round { color: var(--fg); margin-top: 8px; opacity: 0.9; }
+.ev.round:first-child { margin-top: 0; }
+.ev-name { color: #7DD3FC; }
+.ev-ms { color: #64748B; font-size: 11.5px; }
+.ev-prev { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.ev.verify { color: var(--accent); }
+.ev.verify.bad { color: var(--danger); }
+.ev.repair { color: var(--warn); }
+.ev.hint { color: var(--warn); }
+.ev.think { color: #64748B; }
+.answer { margin-top: 18px; }
+.answer h1, .answer h2, .answer h3, .answer h4 { margin: 18px 0 8px; font-size: 15px; letter-spacing: 0.2px; }
+.answer h1:first-child, .answer h2:first-child, .answer h3:first-child { margin-top: 0; }
+.answer p { margin: 0 0 10px; }
+.answer ul, .answer ol { margin: 0 0 12px; padding-left: 20px; }
+.answer li { margin: 3px 0; }
+.answer strong { color: #E2E8F0; }
+.answer code {
+  font-family: var(--mono); font-size: 12.5px;
+  background: rgba(148, 163, 184, 0.14); padding: 1px 5px; border-radius: 5px;
+}
+.answer pre.code {
+  background: #0B1220; border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px; overflow: auto; margin: 0 0 12px;
+}
+.answer pre.code code { background: none; padding: 0; font-size: 12.5px; line-height: 1.55; }
+.cit {
+  font-family: var(--mono); font-size: 12px;
+  background: rgba(34, 197, 94, 0.12); color: #86EFAC;
+  border: 1px solid rgba(34, 197, 94, 0.35); border-radius: 6px;
+  padding: 0 5px; margin: 0 1px; transition: background 120ms ease;
+}
+.cit:hover { background: rgba(34, 197, 94, 0.24); }
+.stats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.stat {
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  background: rgba(148, 163, 184, 0.08); border: 1px solid var(--line);
+  border-radius: 8px; padding: 3px 9px;
+}
+.stat b { color: var(--fg); font-weight: 600; }
+.side-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.side-head h2 { font-size: 13px; margin: 0; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.side-tip { font-size: 11.5px; color: #64748B; margin: -4px 0 10px; }
+.ratio { font-family: var(--mono); font-size: 12.5px; color: var(--accent); }
+.cits { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1 1 auto; min-height: 60px; }
+.cits li { margin-bottom: 4px; }
+.cit-item {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  background: transparent; border: 1px solid transparent; border-radius: 8px;
+  padding: 5px 8px; text-align: left; color: var(--muted);
+  font-family: var(--mono); font-size: 12px;
+}
+.cit-item:hover { background: rgba(148, 163, 184, 0.08); border-color: var(--line); color: var(--fg); }
+.cit-item.bad .cit-raw { color: #FCA5A5; text-decoration: line-through; text-decoration-thickness: 1px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: var(--accent); }
+.dot.bad { background: var(--danger); }
+.cit-raw { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cit-detail { font-size: 11px; color: #64748B; }
+.src-head {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+}
+.src {
+  margin: 8px 0 0; padding: 10px; border-radius: 10px;
+  background: #0B1220; border: 1px solid var(--line);
+  overflow: auto; max-height: 300px;
+  font-family: var(--mono); font-size: 12px; line-height: 1.55;
+}
+.src .ln { color: #475569; user-select: none; display: inline-block; width: 40px; text-align: right; margin-right: 12px; }
+.src .hit { background: rgba(34, 197, 94, 0.12); display: block; margin: 0 -10px; padding: 0 10px; }
+.empty { color: var(--muted); font-size: 12.5px; font-family: var(--mono); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo">◈</span> <b>CiteCode</b>
+    <span class="muted">引用可验证的代码阅读 Agent</span></div>
+  <div class="meta">
+    <span class="pill">回放 · 无需密钥</span>
+    <span class="pill plain">deepseek-chat</span>
+    <span class="pill plain" title="MCP 工具：repo__list_files、repo__read_file、repo__search_code、repo__outline、repo__repo_stats">5 个工具</span>
+  </div>
+</header>
+<main class="layout">
+  <section class="panel">
+    <div class="repo-row">
+      <span class="label">仓库</span>
+      <code>D:\github\citecode\examples\sample-repo</code>
+      <span class="muted">7 个可读文件</span>
+    </div>
+    <form id="ask">
+      <textarea id="question" rows="2" placeholder="问一个关于这个代码库的问题，例如：这个服务的 HTTP 入口在哪里？"></textarea>
+      <div class="actions">
+        <button type="submit" id="run">开始分析</button>
+        <span class="status" id="status"></span>
+      </div>
+      <div class="presets" id="presets"></div>
+    </form>
+    <div class="stream" id="stream" hidden></div>
+    <article class="answer" id="answer" hidden></article>
+    <div class="stats" id="stats" hidden></div>
+  </section>
+  <aside class="panel side">
+    <div class="side-head"><h2>引用校验</h2><span class="ratio" id="ratio">—</span></div>
+    <div class="side-tip">点击任意引用，在下方查看对应源码</div>
+    <ul class="cits" id="cits"><li class="empty">还没有引用</li></ul>
+    <div class="src-head" id="src-head" hidden></div>
+    <pre class="src" id="src" hidden></pre>
+  </aside>
+</main>
+<script>window.__CITECODE_SNAPSHOT__ = {"question":"这个服务的 HTTP 入口在哪里？服务器对象是在哪一行创建的？","caseId":"entry","repoLabel":"D:\\github\\citecode\\examples\\sample-repo","fileCount":7,"model":"replay(entry.jsonl)","mode":"replay","events":[{"type":"round","round":1},{"type":"assistant","round":1,"content":"我先看一下仓库结构。","toolCallCount":2},{"type":"tool","round":1,"name":"repo__repo_stats","ok":true,"durationMs":11,"preview":"文件总数：7 总大小：12.2 KB 按后缀分布（前 12）： .ts 5 个文件 11.4 KB .json 1 个文件 244 B .md 1 个文件 624 B 最大的 7 个文件： 2.7 KB src/auth.ts 2.5 KB src/routes/notes.ts 2.4 KB src/store.ts 2.3 KB src/app.ts 1…"},{"type":"tool","round":1,"name":"repo__list_files","ok":true,"durationMs":1,"preview":"共 7 个文件： package.json (244 B) README.md (624 B) src/app.ts (2.3 KB) src/auth.ts (2.7 KB) src/routes/notes.ts (2.5 KB) src/store.ts (2.4 KB) tests/app.test.ts (1.5 KB)"},{"type":"round","round":2},{"type":"assistant","round":2,"content":"","toolCallCount":2},{"type":"tool","round":2,"name":"repo__read_file","ok":true,"durationMs":2,"preview":"src/app.ts · 2.3 KB · 共 64 行 src/app.ts（第 1-64 行，共 64 行） 引用格式：`路径:起始行-结束行` 1│ import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'; 2│ import { AuthE…"},{"type":"tool","round":2,"name":"repo__read_file","ok":true,"durationMs":1,"preview":"package.json · 244 B · 共 11 行 package.json（第 1-11 行，共 11 行） 引用格式：`路径:起始行-结束行` 1│ { 2│ \"name\": \"sample-notes-api\", 3│ \"version\": \"0.1.0\", 4│ \"private\": true, 5│ \"type\": \"module\", 6│…"},{"type":"round","round":3},{"type":"assistant","round":3,"content":"HTTP 入口是 `src/app.ts`，服务器对象在 `src/app.ts:27` 由 `createServer(...)` 创建。\n\n1. 进程入口：`npm start` 直接运行 `src/app.ts`，没有单独的 `server.ts` 或 `index.ts`（`package.json:7`）。\n2. 服务器对象创建位置：`createApp()` 内部 `return createServer(async (req, res) => {...})`，即 `src/app.ts:27`；`createServer` 从 `node:http` 导入（`src/app.ts:1`）。\n3. 请求总入口：所有请求都进入这个 `createServer` 回调，先解析 URL 与 `authorization` 头，再分流到 `/login` 或带 token 的鉴权分支（`src/app.ts:26-30`、`src/app.ts:33-49`）。\n4. 实际监听：模块顶层直接调用 `createApp().listen(PORT, ...)`，端口来自 `process.env.PORT`，默认 3000（`src/app.ts:6`、`src/app.ts:61-63`）。\n5. 业务路由不在 app.ts 里，而是委托给 `handleNotes`（`src/app.ts:52`），其定义在 `src/routes/notes.ts`（`src/app.ts:3`）。\n\n不确定：`src/routes/notes.ts` 我只确认了导入与调用点，未逐行阅读其内部路由表，因此具体有哪些 notes 子路径未在此回答。","toolCallCount":0},{"type":"verify","round":3,"verified":9,"total":9}],"answer":"HTTP 入口是 `src/app.ts`，服务器对象在 `src/app.ts:27` 由 `createServer(...)` 创建。\n\n1. 进程入口：`npm start` 直接运行 `src/app.ts`，没有单独的 `server.ts` 或 `index.ts`（`package.json:7`）。\n2. 服务器对象创建位置：`createApp()` 内部 `return createServer(async (req, res) => {...})`，即 `src/app.ts:27`；`createServer` 从 `node:http` 导入（`src/app.ts:1`）。\n3. 请求总入口：所有请求都进入这个 `createServer` 回调，先解析 URL 与 `authorization` 头，再分流到 `/login` 或带 token 的鉴权分支（`src/app.ts:26-30`、`src/app.ts:33-49`）。\n4. 实际监听：模块顶层直接调用 `createApp().listen(PORT, ...)`，端口来自 `process.env.PORT`，默认 3000（`src/app.ts:6`、`src/app.ts:61-63`）。\n5. 业务路由不在 app.ts 里，而是委托给 `handleNotes`（`src/app.ts:52`），其定义在 `src/routes/notes.ts`（`src/app.ts:3`）。\n\n不确定：`src/routes/notes.ts` 我只确认了导入与调用点，未逐行阅读其内部路由表，因此具体有哪些 notes 子路径未在此回答。","citations":{"total":9,"verified":9,"ratio":1,"items":[{"raw":"src/app.ts:27","path":"src/app.ts","startLine":27,"endLine":27,"status":"verified","snippet":"return createServer(async (req, res) => {"},{"raw":"package.json:7","path":"package.json","startLine":7,"endLine":7,"status":"verified","snippet":"\"start\": \"node --experimental-strip-types src/app.ts\","},{"raw":"src/app.ts:1","path":"src/app.ts","startLine":1,"endLine":1,"status":"verified","snippet":"import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';"},{"raw":"src/app.ts:26-30","path":"src/app.ts","startLine":26,"endLine":30,"status":"verified","snippet":"export function createApp() {\n  return createServer(async (req, res) => {\n    const url = new URL(req.url ?? '/', 'http://localhost');\n    const header = req.headers.authorization;\n    const session: Session | null = verifyToken(header?.rep"},{"raw":"src/app.ts:33-49","path":"src/app.ts","startLine":33,"endLine":49,"status":"verified","snippet":"if (url.pathname === '/login' && req.method === 'POST') {\n      try {\n        const body = await readJson(req);\n        const result = login(store, String(body.email ?? ''), String(body.password ?? ''));\n        send(res, 200, { token: resu"},{"raw":"src/app.ts:6","path":"src/app.ts","startLine":6,"endLine":6,"status":"verified","snippet":"const PORT = Number(process.env.PORT ?? 3000);"},{"raw":"src/app.ts:61-63","path":"src/app.ts","startLine":61,"endLine":63,"status":"verified","snippet":"createApp().listen(PORT, () => {\n  console.log(`sample-notes-api 已启动：http://localhost:${PORT}`);\n});"},{"raw":"src/app.ts:52","path":"src/app.ts","startLine":52,"endLine":52,"status":"verified","snippet":"const handled = await handleNotes(store, session, req, res);"},{"raw":"src/app.ts:3","path":"src/app.ts","startLine":3,"endLine":3,"status":"verified","snippet":"import { handleNotes, ValidationError } from './routes/notes.js';"}]},"stats":{"rounds":3,"toolCalls":4,"tokens":6230,"stopReason":"final","repairs":0,"durationMs":19},"sources":{"src/app.ts:27":{"path":"src/app.ts","start":24,"end":30,"lines":[{"n":24,"text":" * 返回 401 的分支共有三处：缺 token、token 非法、登录信息不完整。"},{"n":25,"text":" */"},{"n":26,"text":"export function createApp() {"},{"n":27,"text":"  return createServer(async (req, res) => {"},{"n":28,"text":"    const url = new URL(req.url ?? '/', 'http://localhost');"},{"n":29,"text":"    const header = req.headers.authorization;"},{"n":30,"text":"    const session: Session | null = verifyToken(header?.replace(/^Bearer\\s+/i, ''));"}]},"package.json:7":{"path":"package.json","start":4,"end":10,"lines":[{"n":4,"text":"  \"private\": true,"},{"n":5,"text":"  \"type\": \"module\","},{"n":6,"text":"  \"scripts\": {"},{"n":7,"text":"    \"start\": \"node --experimental-strip-types src/app.ts\","},{"n":8,"text":"    \"test\": \"node --experimental-strip-types --test tests/app.test.ts\""},{"n":9,"text":"  }"},{"n":10,"text":"}"}]},"src/app.ts:1":{"path":"src/app.ts","start":1,"end":4,"lines":[{"n":1,"text":"import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';"},{"n":2,"text":"import { AuthError, login, verifyToken, type Session } from './auth.js';"},{"n":3,"text":"import { handleNotes, ValidationError } from './routes/notes.js';"},{"n":4,"text":"import { seedStore } from './store.js';"}]},"src/app.ts:26-30":{"path":"src/app.ts","start":23,"end":33,"lines":[{"n":23,"text":" * 唯一入口：所有请求先进这里，再做「登录」或「带 token 的鉴权」分流。"},{"n":24,"text":" * 返回 401 的分支共有三处：缺 token、token 非法、登录信息不完整。"},{"n":25,"text":" */"},{"n":26,"text":"export function createApp() {"},{"n":27,"text":"  return createServer(async (req, res) => {"},{"n":28,"text":"    const url = new URL(req.url ?? '/', 'http://localhost');"},{"n":29,"text":"    const header = req.headers.authorization;"},{"n":30,"text":"    const session: Session | null = verifyToken(header?.replace(/^Bearer\\s+/i, ''));"},{"n":31,"text":""},{"n":32,"text":"    // 登录不需要 token。"},{"n":33,"text":"    if (url.pathname === '/login' && req.method === 'POST') {"}]},"src/app.ts:33-49":{"path":"src/app.ts","start":30,"end":52,"lines":[{"n":30,"text":"    const session: Session | null = verifyToken(header?.replace(/^Bearer\\s+/i, ''));"},{"n":31,"text":""},{"n":32,"text":"    // 登录不需要 token。"},{"n":33,"text":"    if (url.pathname === '/login' && req.method === 'POST') {"},{"n":34,"text":"      try {"},{"n":35,"text":"        const body = await readJson(req);"},{"n":36,"text":"        const result = login(store, String(body.email ?? ''), String(body.password ?? ''));"},{"n":37,"text":"        send(res, 200, { token: result.token });"},{"n":38,"text":"      } catch (error) {"},{"n":39,"text":"        if (error instanceof AuthError) return send(res, 401, { error: error.message });"},{"n":40,"text":"        throw error;"},{"n":41,"text":"      }"},{"n":42,"text":"      return;"},{"n":43,"text":"    }"},{"n":44,"text":""},{"n":45,"text":"    // 其余接口一律要求有效 token。"},{"n":46,"text":"    if (!session) {"},{"n":47,"text":"      send(res, 401, { error: '缺少或无效的 token' });"},{"n":48,"text":"      return;"},{"n":49,"text":"    }"},{"n":50,"text":""},{"n":51,"text":"    try {"},{"n":52,"text":"      const handled = await handleNotes(store, session, req, res);"}]},"src/app.ts:6":{"path":"src/app.ts","start":3,"end":9,"lines":[{"n":3,"text":"import { handleNotes, ValidationError } from './routes/notes.js';"},{"n":4,"text":"import { seedStore } from './store.js';"},{"n":5,"text":""},{"n":6,"text":"const PORT = Number(process.env.PORT ?? 3000);"},{"n":7,"text":""},{"n":8,"text":"function send(res: ServerResponse, status: number, payload: unknown): void {"},{"n":9,"text":"  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });"}]},"src/app.ts:61-63":{"path":"src/app.ts","start":58,"end":66,"lines":[{"n":58,"text":"  });"},{"n":59,"text":"}"},{"n":60,"text":""},{"n":61,"text":"createApp().listen(PORT, () => {"},{"n":62,"text":"  console.log(`sample-notes-api 已启动：http://localhost:${PORT}`);"},{"n":63,"text":"});"},{"n":64,"text":""},{"n":65,"text":""},{"n":66,"text":""}]},"src/app.ts:52":{"path":"src/app.ts","start":49,"end":55,"lines":[{"n":49,"text":"    }"},{"n":50,"text":""},{"n":51,"text":"    try {"},{"n":52,"text":"      const handled = await handleNotes(store, session, req, res);"},{"n":53,"text":"      if (!handled) send(res, 404, { error: '路由不存在' });"},{"n":54,"text":"    } catch (error) {"},{"n":55,"text":"      if (error instanceof ValidationError) return send(res, 400, { error: error.message });"}]},"src/app.ts:3":{"path":"src/app.ts","start":1,"end":6,"lines":[{"n":1,"text":"import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';"},{"n":2,"text":"import { AuthError, login, verifyToken, type Session } from './auth.js';"},{"n":3,"text":"import { handleNotes, ValidationError } from './routes/notes.js';"},{"n":4,"text":"import { seedStore } from './store.js';"},{"n":5,"text":""},{"n":6,"text":"const PORT = Number(process.env.PORT ?? 3000);"}]}}};</script>
+<script></script>
+<script>
+(function () {
+  var snap = window.__CITECODE_SNAPSHOT__ || null;
+  var sources = {};
+  var running = false;
+
+  function $(id) { return document.getElementById(id); }
+  function esc(value) {
+    return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  var CITE_RE = /(?<![A-Za-z0-9_\-\/.])([A-Za-z0-9_][A-Za-z0-9_.\-]*(?:\/[A-Za-z0-9_.\-]+)*\.[A-Za-z0-9]+):(\d+)(?:-(\d+))?/g;
+
+  function inline(text) {
+    var out = esc(text);
+    out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    return out;
+  }
+
+  function withCitations(html) {
+    return html.replace(CITE_RE, function (m) {
+      return '<button class="cit" type="button" data-raw="' + m + '">' + m + '</button>';
+    });
+  }
+
+  function renderMarkdown(md) {
+    var lines = String(md || '').split(/\r?\n/);
+    var out = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (/^\s*$/.test(line)) { i++; continue; }
+
+      if (/^```/.test(line)) {
+        i++;
+        var buf = [];
+        while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+        i++;
+        out.push('<pre class="code"><code>' + esc(buf.join('\n')) + '</code></pre>');
+        continue;
+      }
+
+      var h = /^(#{1,4})\s+(.*)$/.exec(line);
+      if (h) {
+        var level = h[1].length;
+        out.push('<h' + level + '>' + withCitations(inline(h[2])) + '</h' + level + '>');
+        i++;
+        continue;
+      }
+
+      if (/^\s*[-*]\s+/.test(line)) {
+        var items = [];
+        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+          items.push('<li>' + withCitations(inline(lines[i].replace(/^\s*[-*]\s+/, ''))) + '</li>');
+          i++;
+        }
+        out.push('<ul>' + items.join('') + '</ul>');
+        continue;
+      }
+
+      if (/^\s*\d+[.)]\s+/.test(line)) {
+        var oitems = [];
+        while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
+          oitems.push('<li>' + withCitations(inline(lines[i].replace(/^\s*\d+[.)]\s+/, ''))) + '</li>');
+          i++;
+        }
+        out.push('<ol>' + oitems.join('') + '</ol>');
+        continue;
+      }
+
+      var para = [];
+      while (i < lines.length && !/^\s*$/.test(lines[i]) &&
+             !/^```/.test(lines[i]) && !/^#{1,4}\s/.test(lines[i]) &&
+             !/^\s*[-*]\s+/.test(lines[i]) && !/^\s*\d+[.)]\s+/.test(lines[i])) {
+        para.push(lines[i]);
+        i++;
+      }
+      out.push('<p>' + withCitations(inline(para.join(' '))) + '</p>');
+    }
+    return out.join('');
+  }
+
+  function eventRow(ev) {
+    if (ev.type === 'round') return '<div class="ev round">第 ' + ev.round + ' 轮</div>';
+    if (ev.type === 'tool') {
+      return '<div class="ev tool' + (ev.ok ? '' : ' ev-bad') + '">' +
+        '<span class="ev-name">' + esc(ev.name) + '</span>' +
+        '<span class="ev-ms">' + ev.durationMs + ' ms</span>' +
+        '<span class="ev-prev">' + esc(ev.preview) + '</span></div>';
+    }
+    if (ev.type === 'verify') {
+      var ok = ev.total > 0 && ev.verified === ev.total;
+      return '<div class="ev verify' + (ok ? '' : ' bad') + '">回读校验 ' + ev.verified + '/' + ev.total + '</div>';
+    }
+    if (ev.type === 'repair') {
+      return '<div class="ev repair">↻ 自校正第 ' + ev.attempt + ' 次 · ' + ev.failed + '/' + ev.total + ' 条未通过</div>';
+    }
+    if (ev.type === 'hint') return '<div class="ev hint">' + esc(ev.message) + '</div>';
+    if (ev.type === 'assistant' && ev.toolCallCount > 0) {
+      return '<div class="ev think">→ 请求 ' + ev.toolCallCount + ' 个工具</div>';
+    }
+    return '';
+  }
+
+  function appendEvent(ev) {
+    var row = eventRow(ev);
+    if (!row) return;
+    var box = $('stream');
+    box.insertAdjacentHTML('beforeend', row);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function statChip(label, value) {
+    return '<span class="stat">' + label + ' <b>' + esc(value) + '</b></span>';
+  }
+
+  function renderStats(run) {
+    var s = run.stats;
+    var html = '';
+    html += statChip('结束', s.stopReason);
+    html += statChip('轮次', s.rounds);
+    html += statChip('工具', s.toolCalls);
+    html += statChip('token', s.tokens);
+    if (s.repairs > 0) html += statChip('自校正', s.repairs + ' 次');
+    var elapsed = s.durationMs < 1000 ? s.durationMs + ' ms' : (s.durationMs / 1000).toFixed(1) + ' s';
+    html += statChip('耗时', elapsed);
+    $('stats').innerHTML = html;
+    $('stats').hidden = false;
+  }
+
+  function renderCits(run) {
+    var items = run.citations.items;
+    $('ratio').textContent = run.citations.total === 0
+      ? '0 条引用'
+      : run.citations.verified + '/' + run.citations.total + ' 通过';
+
+    if (!items.length) {
+      $('cits').innerHTML = '<li class="empty">这次回答没有引用</li>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var ok = it.status === 'verified';
+      html += '<li><button type="button" class="cit-item' + (ok ? '' : ' bad') + '"' +
+        ' data-raw="' + esc(it.raw) + '" data-path="' + esc(it.path) + '"' +
+        ' data-start="' + it.startLine + '" data-end="' + it.endLine + '">' +
+        '<span class="dot' + (ok ? '' : ' bad') + '"></span>' +
+        '<span class="cit-raw">' + esc(it.raw) + '</span>' +
+        '<span class="cit-detail">' + esc(ok ? '通过' : (it.detail || it.status)) + '</span>' +
+        '</button></li>';
+    }
+    $('cits').innerHTML = html;
+  }
+
+  function paintSource(view, start, end) {
+    var head = $('src-head');
+    var pre = $('src');
+    if (view.error) {
+      head.textContent = view.path + ' · ' + view.error;
+      head.hidden = false;
+      pre.innerHTML = '';
+      pre.hidden = true;
+      return;
+    }
+    head.textContent = view.path + ' · 第 ' + start + '-' + end + ' 行';
+    head.hidden = false;
+    var html = '';
+    for (var i = 0; i < view.lines.length; i++) {
+      var line = view.lines[i];
+      var hit = line.n >= start && line.n <= end;
+      html += '<span class="' + (hit ? 'hit' : '') + '"><span class="ln">' + line.n + '</span>' + esc(line.text) + '</span>\n';
+    }
+    pre.innerHTML = html;
+    pre.hidden = false;
+  }
+
+  function showSource(raw, path, start, end) {
+    if (sources[raw]) { paintSource(sources[raw], start, end); return; }
+    if (snap) return;
+    fetch('/api/source?path=' + encodeURIComponent(path) +
+          '&start=' + start + '&end=' + end +
+          '&raw=' + encodeURIComponent(raw))
+      .then(function (res) { return res.json(); })
+      .then(function (view) { sources[raw] = view; paintSource(view, start, end); })
+      .catch(function (err) { paintSource({ path: path, lines: [], error: err.message }, start, end); });
+  }
+
+  document.addEventListener('click', function (event) {
+    var cite = event.target.closest('.cit');
+    if (cite) {
+      var rawValue = cite.getAttribute('data-raw');
+      var parts = /^(.*):(\d+)(?:-(\d+))?$/.exec(rawValue || '');
+      if (parts) showSource(rawValue, parts[1], parseInt(parts[2], 10), parseInt(parts[3] || parts[2], 10));
+      return;
+    }
+    var item = event.target.closest('.cit-item');
+    if (item) {
+      showSource(
+        item.getAttribute('data-raw'),
+        item.getAttribute('data-path'),
+        parseInt(item.getAttribute('data-start'), 10),
+        parseInt(item.getAttribute('data-end'), 10)
+      );
+    }
+  });
+
+  function finish(run) {
+    $('answer').innerHTML = renderMarkdown(run.answer);
+    $('answer').hidden = false;
+    renderCits(run);
+    renderStats(run);
+    $('status').textContent = '';
+    $('status').className = 'status';
+  }
+
+  function handleEvent(block) {
+    var lines = block.split('\n');
+    var name = 'message';
+    var data = [];
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].indexOf('event:') === 0) name = lines[i].slice(6).trim();
+      else if (lines[i].indexOf('data:') === 0) data.push(lines[i].slice(5).trim());
+    }
+    if (!data.length) return;
+    var payload;
+    try { payload = JSON.parse(data.join('\n')); } catch (err) { return; }
+    if (name === 'agent') { appendEvent(payload); return; }
+    if (name === 'done') { finish(payload); return; }
+    if (name === 'error') {
+      $('status').textContent = '失败：' + (payload.message || '未知错误');
+      $('status').className = 'status bad';
+    }
+  }
+
+  function runAsk(question, caseId) {
+    if (running) return;
+    running = true;
+    $('run').disabled = true;
+    $('status').textContent = '分析中…';
+    $('status').className = 'status';
+    $('stream').hidden = false;
+    $('stream').innerHTML = '';
+    $('answer').hidden = true;
+    $('answer').innerHTML = '';
+    $('stats').hidden = true;
+    $('cits').innerHTML = '';
+    $('src').hidden = true;
+    $('src-head').hidden = true;
+    $('ratio').textContent = '—';
+
+    var body = JSON.stringify({ question: question, caseId: caseId || null });
+    fetch('/api/ask', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: body
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.json().then(function (err) {
+          $('status').textContent = '失败：' + (err.message || res.status);
+          $('status').className = 'status bad';
+        });
+      }
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = '';
+      function pump() {
+        return reader.read().then(function (chunk) {
+          if (chunk.done) {
+            running = false;
+            $('run').disabled = false;
+            return;
+          }
+          buffer += decoder.decode(chunk.value, { stream: true });
+          var index;
+          while ((index = buffer.indexOf('\n\n')) >= 0) {
+            var block = buffer.slice(0, index);
+            buffer = buffer.slice(index + 2);
+            handleEvent(block);
+          }
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function (err) {
+      $('status').textContent = '失败：' + err.message;
+      $('status').className = 'status bad';
+    }).finally(function () {
+      running = false;
+      $('run').disabled = false;
+    });
+  }
+
+  if (snap) {
+    sources = snap.sources || {};
+    $('stream').hidden = false;
+    for (var i = 0; i < snap.events.length; i++) appendEvent(snap.events[i]);
+    finish(snap);
+    $('run').disabled = true;
+    $('question').value = snap.question;
+    $('status').textContent = '快照（不可再运行）';
+  } else {
+    var presets = window.__CITECODE_PRESETS__ || [];
+    var box = $('presets');
+    for (var j = 0; j < presets.length; j++) {
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.textContent = presets[j].id;
+      chip.setAttribute('data-id', presets[j].id);
+      chip.setAttribute('data-question', presets[j].question);
+      box.appendChild(chip);
+    }
+    box.addEventListener('click', function (event) {
+      var chip = event.target.closest('.chip');
+      if (!chip) return;
+      $('question').value = chip.getAttribute('data-question');
+      runAsk(chip.getAttribute('data-question'), chip.getAttribute('data-id'));
+    });
+    $('ask').addEventListener('submit', function (event) {
+      event.preventDefault();
+      var question = $('question').value.trim();
+      if (!question) return;
+      runAsk(question, null);
+    });
+  }
+})();
+</script>
+</body>
+</html>

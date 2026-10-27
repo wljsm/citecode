@@ -44,3 +44,7 @@ jobs:
       - run: node dist/cli.js eval --golden eval/golden-self.json --replay fixtures/faults-self --faults 1 --fail-under 0.6
       # 消融对照表也能离线复现，避免 README 里的数字只能靠一张嘴
       - run: node dist/cli.js ablation --replay fixtures/ablation
+      # Web UI 端到端：真起 HTTP 服务，跑一题并解析 SSE
+      - run: npx tsx scripts/web-smoke.ts
+      # 快照导出（README 里那张图的来源）也必须能跑通
+      - run: node dist/cli.js web --export /tmp/demo.html --case entry --replay fixtures/cassettes

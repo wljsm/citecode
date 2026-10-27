@@ -5,11 +5,13 @@
 ![CI](../../actions/workflows/ci.yml/badge.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Tests](https://img.shields.io/badge/tests-37%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-41%20passed-brightgreen)
 
 把大模型接到代码库上并不难，难的是让它**别编**。模型会很自信地给出 `src/auth.ts:42`，而那个文件只有 20 行——这类"引用幻觉"看起来最专业，实际最不可用。
 
 CiteCode 的做法：**回答里的每一条 `路径:行号` 都会被程序回读校验**；没通过的不只是被标红，还会带着失败原因被打回给模型，让它重新查证后重答。提示词只能"要求"引用，回读校验才能"保证"引用。
+
+![CiteCode Web 界面](docs/screenshot.png)
 
 ---
 
@@ -19,25 +21,22 @@ CiteCode 的做法：**回答里的每一条 `路径:行号` 都会被程序回�
 git clone https://github.com/wljsm/citecode && cd citecode
 npm install && npm run build
 
+node dist/cli.js web --replay fixtures/cassettes   # 打开 http://127.0.0.1:4173 点题即看
 node dist/cli.js tools examples/sample-repo        # 列出 5 个 MCP 工具
 npm run smoke                                      # 拉起 Server 调全部工具 + 引用自检
 node dist/cli.js eval --replay fixtures/cassettes  # 12 题基准，离线复现全部指标
 node dist/cli.js ablation --replay fixtures/ablation   # 复现下面那张对照表
 ```
 
-模型响应录制成 cassette 随仓库提交，所以上面每一条命令都**不联网、不需要密钥**——CI 里跑的就是它们。
+模型响应录制成 cassette 随仓库提交，所以上面每一条命令都**不联网、不需要密钥**——CI 里跑的就是它们。没有 Node 环境也能看界面：直接用浏览器打开 [`docs/demo.html`](docs/demo.html)（自包含快照，单文件、无外部依赖）。
 
----
+## 版本演进
 
-## 这一版（v0.2）做了什么
-
-| 能力 | 说明 |
+| 版本 | 内容 |
 | --- | --- |
-| **引用自校正** | 校验失败的引用连同原因回灌给模型，允许它重新调用工具、重新作答，最多 N 轮（默认 2，可关） |
-| **消融实验** | `ablation` 命令只切换"自校正"这一个变量跑两遍，输出对照表，而不是靠形容词 |
-| **故障注入** | 人为把首答引用改错，验证「校验 → 回灌 → 重查 → 重答」闭环真的闭得上 |
-| **双基准** | 12 题（样例服务）+ 10 题（把 CiteCode 自己当被测仓库），共 22 题 |
-| **离线可复现** | 三套 cassette + CI 四条回放任务，README 里的每个数字都能在本地重跑 |
+| **v0.1** | 引用回读校验、5 个 MCP 只读工具、预算耗尽收尾、cassette 录制回放、6 题基准 |
+| **v0.2** | 引用自校正闭环、消融实验、故障注入、22 题双基准（含诱导题） |
+| **v0.3** | Web 界面：SSE 流式时间线、引用可点击看源码、单文件快照导出，**零前端依赖** |
 
 ---
 
@@ -92,6 +91,28 @@ v0.1 只会报警：回答错了照样输出，只是末尾加一行"3/11 通过
 - **修正回合共享探索预算**，不会额外送轮次，避免"靠重试堆出正确率"；
 - **同时记录初始与最终引用率**（`initialCitations` / `citations`），否则无法区分"改好了"和"本来就好"；
 - **没有引用的实质回答也要修正**——"没有证据"和"证据是错的"一样不可用。
+
+---
+
+## Web 界面
+
+`citecode web` 起一个只用 Node 原生 `http` 的服务——不引入 express、不引前端框架、没有构建步骤：
+
+- **左栏**：轮次与工具调用的实时时间线（SSE 逐条推送），结束后渲染回答，其中每个 `路径:行号` 都是可点击的按钮；
+- **右栏**：引用校验清单（通过 / 文件不存在 / 行号越界逐条标注），点任意一条在下方显示源码并高亮命中行；
+- **预设题目**取自 `eval/golden.json`；加 `--replay` 时按题目 id 取 cassette，**离线、不需要密钥**。
+
+```bash
+node dist/cli.js web --replay fixtures/cassettes   # 回放模式：点题即看
+node dist/cli.js web --repo examples/sample-repo   # 实时模式：需要 DEEPSEEK_API_KEY
+node dist/cli.js web --export docs/demo.html --case entry --replay fixtures/cassettes
+```
+
+三个实现取舍：
+
+- **仓库路径在启动时固定**，`/api/source` 只接受相对路径，取源码还是走 `RepoSandbox`——Web 层不新增第二套文件访问逻辑，`../` 和 `.env` 一样会被拒；
+- **只绑 `127.0.0.1`**，没有账号体系，也不打算有；
+- **快照导出**把运行数据、引用结论、源码片段全部内联进一个 HTML，所以 README 里那张图可以直接点开、不需要服务器——这也让 CI 能验证"图不是手工拼的"。
 
 ---
 
@@ -202,6 +223,7 @@ citecode ask    <仓库> <问题> [--rounds 24] [--repairs 2]
 citecode verify <仓库> [--file 回答.md]         # 单独校验一段文本里的引用
 citecode eval   [--golden <file>] [--replay <dir>] [--record <dir>] [--faults 1] [--fail-under 0.8]
 citecode ablation [--golden <file>] [--replay <dir>] [--faults 1]
+citecode web    [--port 4173] [--repo <路径>] [--replay <dir>] [--export <file> --case <id>]
 ```
 
 `ask` 的常用开关：`--replay <file>` 离线回放、`--record <file>` 录制、`--json` 机器可读、`--no-verify` 跳过校验、`--quiet` 静默过程。
@@ -226,11 +248,12 @@ $ node dist/cli.js ask examples/sample-repo "这个服务的 HTTP 入口在哪�
 ## 测试
 
 ```bash
-npm test        # 37 个用例
+npm test        # 41 个用例
 npm run smoke   # 不联网的端到端：拉起 MCP Server 并调用全部工具
+npm run web:smoke  # Web 端到端：真起 HTTP 服务，跑一题并解析 SSE
 ```
 
-覆盖的是**容易错的地方**而不是行数：`../` 逃逸、绝对路径、`.env` 拒读、超限文件、行号越界、cassette 请求规模不匹配、模型抛错、非法 JSON 参数、预算收尾路径、自校正回灌内容、故障注入只改首答。
+覆盖的是**容易错的地方**而不是行数：`../` 逃逸、绝对路径、`.env` 拒读、超限文件、行号越界、cassette 请求规模不匹配、模型抛错、非法 JSON 参数、预算收尾路径、自校正回灌内容、故障注入只改首答、快照页面的 `</script>` 注入。
 
 ---
 
@@ -241,6 +264,7 @@ npm run smoke   # 不联网的端到端：拉起 MCP Server 并调用全部工�
 - 引用校验只能证明"这行代码存在且非空"，**不能证明它支撑了该结论**——语义层面的正确性仍需人工判断。
 - `citecode-self` 有 2 题的通过门槛（工具调用上限、期望关键词）在测得结果后调整过一次，属于评测设计而非模型能力的调整，已如实说明。
 - 评测规模是 22 题、2 个仓库，指标用于回归对比，不代表在大型项目上的表现。
+- Web 界面是单机工具：只绑 `127.0.0.1`、没有鉴权与多用户隔离、SSE 不支持断线续传，不适合直接暴露到公网。
 - 默认只读：不执行目标仓库的代码，不安装依赖。
 
 ---
@@ -256,9 +280,15 @@ citecode/
 │   ├── repo/         # 沙箱、遍历、搜索、大纲
 │   ├── verify/       # 引用提取与回读校验
 │   ├── eval/         # 基准跑分、消融实验、故障注入
+│   ├── web/          # Web 界面：页面渲染、SSE 服务、源码片段
 │   └── cli.ts
-├── tests/                # 37 个 node:test 用例
-├── scripts/smoke.ts      # 无需 Key 的端到端冒烟
+├── tests/                # 41 个 node:test 用例
+├── scripts/
+│   ├── smoke.ts          # 无需 Key 的端到端冒烟（MCP 工具）
+│   └── web-smoke.ts      # Web 端到端冒烟（真起 HTTP + 解析 SSE）
+├── docs/
+│   ├── screenshot.png    # README 首屏截图（由快照导出后渲染）
+│   └── demo.html         # 自包含快照，浏览器直接打开
 ├── eval/
 │   ├── golden.json       # 12 题：样例服务
 │   └── golden-self.json  # 10 题：把 CiteCode 自己当仓库

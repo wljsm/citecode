@@ -12,6 +12,7 @@ import { renderCitationReport, verifyCitations } from './verify/citations.js';
 import { walkFiles } from './repo/walk.js';
 import { renderCaseLine, renderSummary, runSuite, type GoldenSuite } from './eval/runner.js';
 import { renderAblation, runAblation } from './eval/ablation.js';
+import { exportSnapshot, startWebServer, type WebDeps } from './web/server.js';
 
 const useColor = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
 const paint =
@@ -394,6 +395,108 @@ async function commandAblation(args: string[]): Promise<void> {
   }
 }
 
+async function commandWeb(args: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: {
+      port: { type: 'string' },
+      repo: { type: 'string' },
+      golden: { type: 'string' },
+      replay: { type: 'string' },
+      repairs: { type: 'string' },
+      export: { type: 'string' },
+      case: { type: 'string' },
+      question: { type: 'string' },
+    },
+  });
+
+  const goldenPath = resolve(values.golden ?? join(process.cwd(), 'eval', 'golden.json'));
+  let suite: GoldenSuite | undefined;
+  if (existsSync(goldenPath)) {
+    try {
+      suite = JSON.parse(readFileSync(goldenPath, 'utf8')) as GoldenSuite;
+    } catch (error) {
+      fail(`基准文件解析失败：${(error as Error).message}`);
+    }
+  } else if (!values.repo) {
+    fail(`找不到基准文件：${goldenPath}（可用 --repo 直接指定仓库）`);
+  }
+
+  const repoRoot = values.repo
+    ? requireRepo(values.repo)
+    : requireRepo(resolve(dirname(goldenPath), suite?.repo ?? '../examples/sample-repo'));
+
+  const replayDir = values.replay ? resolve(values.replay) : undefined;
+  if (replayDir && !existsSync(replayDir)) fail(`cassette 目录不存在：${replayDir}`);
+
+  const config = loadConfig();
+  const host = await McpHost.connect([resolveRepoServerSpec(repoRoot)]);
+
+  try {
+    const { files } = walkFiles(repoRoot);
+    const tools = host.listTools().map((tool) => tool.name);
+
+    let presets = (suite?.cases ?? []).map((item) => ({ id: item.id, question: item.question }));
+    if (replayDir) {
+      presets = presets.filter((preset) => existsSync(resolve(replayDir, `${preset.id}.jsonl`)));
+      if (presets.length === 0) fail(`回放目录里没有可用的 cassette：${replayDir}`);
+    }
+
+    const maxRepairs = values.repairs === undefined ? 2 : Number.parseInt(values.repairs, 10);
+    if (!Number.isFinite(maxRepairs) || maxRepairs < 0) fail('--repairs 必须是非负整数');
+
+    const deps: WebDeps = {
+      host,
+      config,
+      repoRoot,
+      repoLabel: repoRoot,
+      fileCount: files.length,
+      tools,
+      presets,
+      ...(replayDir ? { replayDir } : {}),
+      maxRepairs,
+    };
+
+    if (values.export) {
+      const out = resolve(values.export);
+      const run = await exportSnapshot(deps, out, values.case, values.question);
+      console.log(`${green('已导出快照')} ${out}`);
+      console.log(
+        dim(
+          `引用 ${run.citations.verified}/${run.citations.total} · 工具 ${run.stats.toolCalls} 次 · ` +
+            `token ${run.stats.tokens} · 结束方式 ${run.stats.stopReason}`,
+        ),
+      );
+      return;
+    }
+
+    const port = values.port ? Number.parseInt(values.port, 10) : 4173;
+    if (!Number.isFinite(port) || port < 1) fail('--port 必须是正整数');
+
+    const handle = await startWebServer(deps, { port });
+    const url = `http://127.0.0.1:${handle.port}`;
+    console.log(`${bold('CiteCode Web')} ${url}`);
+    console.log(
+      dim(
+        `仓库 ${repoRoot}（${files.length} 个文件）· ${presets.length} 道预设题 · ` +
+          `${replayDir ? '回放模式（无需密钥）' : '实时模式（需要 API Key）'}`,
+      ),
+    );
+    console.log(dim('按 Ctrl+C 停止'));
+
+    await new Promise<void>((resolvePromise) => {
+      const stop = (): void => {
+        void handle.close().then(() => resolvePromise());
+      };
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
+    });
+  } finally {
+    await host.close();
+  }
+}
+
 function printHelp(): void {
   console.log(`${bold('citecode')} — 引用可验证的代码阅读 Agent
 
@@ -403,6 +506,7 @@ ${bold('用法')}
   citecode verify <仓库> [--file 回答.md]        校验一段文本里的引用是否真实
   citecode eval   [--golden eval/golden.json]   跑基准并输出指标
   citecode ablation [--golden eval/golden.json] 关掉/开启自校正各跑一遍，输出对照组
+  citecode web    [选项]                        启动 Web 界面（流式 + 引用可点击）
 
 ${bold('ask 选项')}
   --rounds <n>     探索预算轮数，默认取 CITECODE_MAX_ROUNDS（24）
@@ -425,6 +529,15 @@ ${bold('ablation 选项')}
   --record <dir>   按 baseline/ 与 repair/ 两个子目录分别录制
   --replay <dir>   从上述两个子目录回放，无需密钥
   --faults <n>     两组配置都注入故障，用来对比「有修复」与「没修复」的差距
+
+${bold('web 选项')}
+  --port <n>       监听端口，默认 4173（只绑定 127.0.0.1）
+  --repo <路径>    被测仓库，默认取基准文件里的 repo
+  --golden <file>  用哪份基准生成预设题目
+  --replay <dir>   回放模式：只跑题库里的题，用 cassette，不联网也无需密钥
+  --export <file>  不启动服务，导出自包含 HTML 快照（配合 --case 或 --question）
+  --case <id>      快照要用的题目 id
+  --question <文本> 快照要问的问题（实时模式）
 `);
 }
 
@@ -446,6 +559,9 @@ async function main(): Promise<void> {
     case 'ablation':
       await commandAblation(rest);
       break;
+    case 'web':
+      await commandWeb(rest);
+      break;
     case undefined:
     case 'help':
     case '--help':
@@ -453,7 +569,7 @@ async function main(): Promise<void> {
       printHelp();
       break;
     default:
-      fail(`未知命令：${command}（可用：tools / ask / verify / eval / ablation）`);
+      fail(`未知命令：${command}（可用：tools / ask / verify / eval / ablation / web）`);
   }
 }
 

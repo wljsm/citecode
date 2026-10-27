@@ -40,3 +40,8 @@ export {
   type AblationReport,
   type AblationRun,
 } from './eval/ablation.js';
+export { withCitationFaults, type FaultClient, type FaultOptions } from './eval/fault.js';
+export { renderPage, type PageOptions } from './web/page.js';
+export { startWebServer, exportSnapshot, type WebDeps, type ServerHandle } from './web/server.js';
+export { sourceView } from './web/source.js';
+export type { SourceView, WebCitation, WebPreset, WebRun, WebRunStats } from './web/types.js';
