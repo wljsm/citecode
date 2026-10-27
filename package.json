@@ -1,0 +1,47 @@
+{
+  "name": "citecode",
+  "version": "0.1.0",
+  "description": "引用可验证的代码阅读 Agent：MCP 只读工具 + DeepSeek 工具调用 + 引用回读校验 + 可复现评测基准",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "citecode": "./dist/cli.js",
+    "citecode-mcp-repo": "./dist/mcp/repo-server.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "llm",
+    "agent",
+    "code-review",
+    "deepseek",
+    "citations"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "test": "tsx --test tests/*.test.ts",
+    "smoke": "tsx scripts/smoke.ts examples/sample-repo",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "eval": "tsx src/cli.ts eval",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "openai": "^7.45.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

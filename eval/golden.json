@@ -1,0 +1,50 @@
+{
+  "name": "sample-notes-api",
+  "description": "针对 examples/sample-repo 的 6 道基准题，覆盖入口、鉴权、调用链、越权与测试。每题都要求真实引用，评测脚本会回读校验。",
+  "repo": "../examples/sample-repo",
+  "defaultMaxToolCalls": 10,
+  "cases": [
+    {
+      "id": "entry",
+      "question": "这个服务的 HTTP 入口在哪里？服务器对象是在哪一行创建的？",
+      "expectFiles": ["src/app.ts"],
+      "expectKeywords": ["createServer"],
+      "maxToolCalls": 6
+    },
+    {
+      "id": "login-chain",
+      "question": "用户登录时密码是怎么校验的？token 又是怎么签发的？请给出调用链。",
+      "expectFiles": ["src/auth.ts"],
+      "expectKeywords": ["verifyPassword"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "create-note",
+      "question": "创建一条笔记的请求，从路由到写入存储经过哪些函数？",
+      "expectFiles": ["src/routes/notes.ts", "src/store.ts"],
+      "expectKeywords": ["handleNotes"],
+      "maxToolCalls": 10
+    },
+    {
+      "id": "auth-guard",
+      "question": "如果请求没有带 Authorization 头，会得到什么响应？这个判断在哪一行？",
+      "expectFiles": ["src/app.ts"],
+      "expectKeywords": ["401"],
+      "maxToolCalls": 6
+    },
+    {
+      "id": "ownership",
+      "question": "为什么 A 用户读不到 B 用户的笔记？这个约束是在哪一层保证的？",
+      "expectFiles": ["src/store.ts"],
+      "expectKeywords": ["ownerId"],
+      "maxToolCalls": 8
+    },
+    {
+      "id": "tests",
+      "question": "项目里有哪些测试？它们分别验证了什么行为？",
+      "expectFiles": ["tests/app.test.ts"],
+      "expectKeywords": ["token"],
+      "maxToolCalls": 8
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "sample-notes-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-strip-types src/app.ts",
+    "test": "node --experimental-strip-types --test tests/app.test.ts"
+  }
+}
